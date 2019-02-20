@@ -140,7 +140,9 @@ class App extends Container
         /**
          * 定时检测
          */
-        $this->job($server, $worker_id);
+        if (0 == $worker_id) {
+            $this->job($server, $worker_id);
+        }
     }
 
     /**
