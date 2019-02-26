@@ -117,9 +117,7 @@ class App extends Container
                 return $response->end($this->error('', 'job_id不能为空哦'));
             }
             try {
-                go(function () use ($params) {
-                    Redis::setDefer(false)->zAdd($this->jobConfig['topic'], $params['time'], $params['job_id']);
-                });
+                Redis::zAdd($this->jobConfig['topic'], $params['time'], $params['job_id']);
                 return $response->end($this->success('', '任务添加成功'));
             } catch (\RedisException $exception) {
                 return $response->end($this->error('', '任务添加失败，请重试'));
@@ -154,9 +152,7 @@ class App extends Container
             $time = time(); // 当前系统时间
             $jobCount = Redis::zCount($this->jobConfig['topic'], 0, $time);
             if ($jobCount > 0) {
-                go(function () use ($jobCount, $time) {
-                    $this->pageLimit($jobCount, $time);
-                });
+                $this->pageLimit($jobCount, $time);
             }
         });
     }
