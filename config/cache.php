@@ -9,7 +9,7 @@
 return [
     'redis' => [
         'poolMin' => 1, //连接池最小数量 数据为：work_num * poolMin
-        'poolMax' => 2000, // 连接池最大数量
+        'poolMax' => 5000, // 连接池最大数量
         'host' => '127.0.0.1',
         'auth' => '', //密码
         'port' => 6379,

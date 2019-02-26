@@ -7,7 +7,7 @@
  */
 
 return [
+    'call_url' => 'http://tenyk.lead86.com:8087/index.php/home/Job/job_releases', //回调通知的URL
     'topic' => 'yk_index',// 消费主题
     'max_try' => 3,//最大重试次数
-    'out_time' => 120, //120秒后服务器无响应，丢弃任务
 ];

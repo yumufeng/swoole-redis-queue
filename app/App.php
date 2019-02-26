@@ -82,8 +82,10 @@ class App extends Container
     {
         $http = new \swoole_http_server("0.0.0.0", 10000);
         $http->set(array(
-            'worker_num' => 8,
+            'worker_num' => 6,
             'daemonize' => 1,
+            'log_file' => $this->env->get('root_path') . 'swoole.log',
+            'pid_file' => $this->env->get('root_path') . 'server.pid',
             'enable_static_handler' => false,
             'max_request' => 15000,
             'reload_async' => true, // 柔性异步重启，会等待所有协程退出后重启+ps
@@ -114,7 +116,6 @@ class App extends Container
             if (!isset($params['job_id']) || empty($params['job_id'])) {
                 return $response->end($this->error('', 'job_id不能为空哦'));
             }
-
             try {
                 go(function () use ($params) {
                     Redis::setDefer(false)->zAdd($this->jobConfig['topic'], $params['time'], $params['job_id']);
@@ -137,55 +138,79 @@ class App extends Container
          * 开启redis连接池
          */
         $this->redis->clearTimer($server);
-        /**
-         * 定时检测
-         */
-        if (0 == $worker_id) {
-            $this->job($server, $worker_id);
+        if (($worker_id + 1) == $server->setting['worker_num']) {
+            $this->job($server);
         }
     }
 
     /**
      * 执行任务
+     * @param \swoole_server $server
+     * @param $worker_id
      */
-    protected function job(\swoole_server $server, $worker_id)
+    protected function job(\swoole_server $server)
     {
-        $server->tick(500, function () {
+        $server->tick(1000, function () {
             $time = time(); // 当前系统时间
-            $jobList = Redis::zRangeByScore($this->jobConfig['topic'], 0, $time);
-            if (!empty($jobList)) {
-                $this->excute($jobList);
+            $jobCount = Redis::zCount($this->jobConfig['topic'], 0, $time);
+            if ($jobCount > 0) {
+                go(function () use ($jobCount, $time) {
+                    $this->pageLimit($jobCount, $time);
+                });
             }
         });
     }
 
-    private function excute($jobList)
+    private function pageLimit($jobCount, $time)
+    {
+        $jobList = Redis::zRangeByScore($this->jobConfig['topic'], 0, $time);
+        if (empty($jobList)) {
+            return false;
+        }
+        Redis::zRemRangeByScore($this->jobConfig['topic'], 0, $time);
+        $pageSize = 100;
+        $pageCount = ceil($jobCount / $pageSize);
+        for ($page = 0; $page < $pageCount; $page++) {
+            $fromIndex = $page * $pageSize;
+            if ($page > 1) {
+                $fromIndex++;
+                $pageSize = 99;
+            }
+            $execArray = array_splice($jobList, $fromIndex, $pageSize);
+            go(function () use ($execArray) {
+                $this->exec($execArray);
+            });
+        }
+        return true;
+    }
+
+    protected function exec($jobList)
     {
         $result = $this->curl($this->jobConfig['call_url'], $jobList);
-        if ($result) {
-            foreach ($jobList as $item) {
-                Redis::zDelete($this->jobConfig['topic'], $item);
-            }
-        } else {
-            foreach ($jobList as $item) {
-                $rediskey = md5($item);
-                $count = Redis::get($rediskey) ?: 0;
-                if ($count) {
-                    if ($count > $this->jobConfig['max_try']) {
-                        Redis::zRem($this->jobConfig['topic'], $item);
-                        Redis::del($rediskey);
-                        continue;
-                    }
-                    Redis::incrBy($rediskey, 1);
-                } else {
-                    Redis::set($rediskey, 1, $this->jobConfig['out_time']);
+        if (!$result) {
+            $rediskey = $this->jobConfig['topic'] . md5(http_build_query($jobList));
+            $count = Redis::get($rediskey) ? Redis::get($rediskey) : 0;
+            if ($count > 0) {
+                if ($count > $this->jobConfig['max_try'] - 1) {
+                    Redis::setDefer(false)->del($rediskey);
+                    return false;
                 }
-                Redis::zAdd($this->jobConfig['topic'], time() + 5 * ($count + 1), $item);
+                Redis::incrBy($rediskey, 1);
+            } else {
+                Redis::set($rediskey, 1, 120);
+            }
+            if ($count > 0) {
+                \co::sleep($count * 5);
+                $this->exec($jobList);
+            } else {
+                \co::sleep(1);
+                $this->exec($jobList);
             }
         }
 
         return true;
     }
+
 
     private function curl($url, $data_string)
     {
@@ -203,6 +228,11 @@ class App extends Container
         ));
         $result = curl_exec($ch);
         if (curl_errno($ch)) {
+            $root_path = \app\facades\Env::get('root_path') . 'log';
+            if (!is_dir($root_path)) {
+                @mkdir($root_path);
+            }
+            file_put_contents($root_path . '/' . date('m_d') . '.log', json_encode($result) . PHP_EOL, FILE_APPEND);
             return false;
         } else {
             //释放curl句柄
