@@ -82,7 +82,8 @@ class App extends Container
     {
         $http = new \swoole_http_server("0.0.0.0", 10000);
         $http->set(array(
-            'worker_num' => 2,
+            'worker_num' =>
+                2,
             'dispatch_mode' => 2,
             'task_worker_num' => 4,
             'task_max_request' => 1000,
